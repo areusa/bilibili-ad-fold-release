@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站动态带货折叠
 // @namespace    local.bilibili.adfold
-// @version      1.4.3
+// @version      1.4.4
 // @updateURL    https://raw.githubusercontent.com/areusa/bilibili-ad-fold-release/main/bilibili-ad-fold.user.js
 // @downloadURL  https://raw.githubusercontent.com/areusa/bilibili-ad-fold-release/main/bilibili-ad-fold.user.js
 // @description  折叠动态带货，提示视频推广信息，并在原生进度条标记疑似推广区间
@@ -845,7 +845,7 @@
             t.controller.signal.addEventListener('abort', abort, { once: true });
             const finish = (fn, value) => { t.controller.signal.removeEventListener('abort', abort); fn(value); };
             handle = GM_xmlhttpRequest({ method: 'GET', url, anonymous: mode !== 'metadata', responseType: 'arraybuffer', timeout: Math.max(1, t.deadline - Date.now()),
-              headers: { Accept: 'application/json', ...(mode === 'community' ? { Origin: 'https://www.bilibili.com', 'X-Ext-Version': 'bilibili-ad-fold/1.4.3' } : { Referer: 'https://www.bilibili.com/' }) },
+              headers: { Accept: 'application/json', ...(mode === 'community' ? { Origin: 'https://www.bilibili.com', 'X-Ext-Version': 'bilibili-ad-fold/1.4.4' } : { Referer: 'https://www.bilibili.com/' }) },
               onprogress: e => { if (e.loaded > 2 * 1024 * 1024) { handle?.abort(); finish(reject, new Error('响应超过2MB预算')); } },
               onload: r => finish(resolve, r), onerror: () => finish(reject, new Error('网络请求失败')), ontimeout: () => finish(reject, new Error('请求超时')), onabort: () => finish(reject, new Error('请求已取消')) });
           });
@@ -1293,11 +1293,20 @@
   window.addEventListener('resize', () => { railLayout(); if (highlighted) showPreview(highlighted); });
   window.addEventListener('wheel', () => { cancelAnimationFrame(navigateFrame); navigateFrame = 0; }, { passive: true });
   window.addEventListener('touchstart', () => { cancelAnimationFrame(navigateFrame); navigateFrame = 0; }, { passive: true });
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape' || !panel.classList.contains('baf-open')) return;
+  function closePanel() {
     hidePreview();
     panel.classList.remove('baf-open');
     opener.setAttribute('aria-expanded', 'false');
+  }
+  // 捕获点击，兼容页面组件阻止冒泡；不拦截页面原有点击，也不清空设置草稿。
+  document.addEventListener('click', event => {
+    if (!panel.classList.contains('baf-open')) return;
+    const targets = event.composedPath();
+    if (!targets.includes(panel) && !targets.includes(opener)) closePanel();
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !panel.classList.contains('baf-open')) return;
+    closePanel();
     opener.focus();
   });
   function updateList() {
