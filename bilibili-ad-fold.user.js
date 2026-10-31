@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站动态带货折叠
 // @namespace    local.bilibili.adfold
-// @version      1.4.4
+// @version      1.4.5
 // @updateURL    https://raw.githubusercontent.com/areusa/bilibili-ad-fold-release/main/bilibili-ad-fold.user.js
 // @downloadURL  https://raw.githubusercontent.com/areusa/bilibili-ad-fold-release/main/bilibili-ad-fold.user.js
 // @description  折叠动态带货，提示视频推广信息，并在原生进度条标记疑似推广区间
@@ -27,8 +27,8 @@
 (() => {
   'use strict';
   // 规则在本机执行；视频首评未加载时匿名预取B站接口，不读取Cookie或上传文案。
-  const productWords = '电动牙刷|冲牙器|小冰被|凉感被|空调被|泡芙被|棉花被|冬被|被子|卫衣|连帽|按摩仪|按摩器|筋膜枪|剃须刀|脱毛仪|洗脸巾|洗地机|扫地机器人|护眼灯|人体工学椅'.split('|');
-  const PRODUCT = new RegExp(productWords.join('|'));
+  const productWords = [...'电动牙刷|冲牙器|小冰被|凉感被|空调被|泡芙被|棉花被|冬被|被子|卫衣|连帽|按摩仪|按摩器|筋膜枪|剃须刀|脱毛仪|洗脸巾|洗地机|扫地机器人|护眼灯|人体工学椅'.split('|'), ...supplementVocabulary()];
+  const PRODUCT = new RegExp(productWords.join('|'), 'i');
   const GROUPS = [
     ['领券导购', /领券|评论区.{0,16}(?:下单|链接|优惠|羊毛)|点击.{0,12}(?:购买|下单|链接)|橱窗|购买链接/],
     ['促销价格', /大促|抄底价|地板价|到手价|底价|优惠券|限时优惠|不要\s*\d+|\d+\s*\+?\s*(?:元|就能带回家)/],
@@ -41,9 +41,11 @@
     const matches = keywords.filter(word => normalized.includes(word.toLocaleLowerCase()));
     if (matches.length) return matches.map(word => `自定义关键词：${word}`);
     if (goods) return ['商品卡片或商品链接'];
+    const supplement = supplementSignals(text);
+    if (supplement.product && supplement.criticism && supplement.salesCount < 2) return [];
     const hits = GROUPS.filter(([, re]) => re.test(text)).map(([name]) => name);
     return PRODUCT.test(text) && hits.length >= 2 && (hits.includes('领券导购') || hits.includes('售后承诺') || hits.includes('跨平台低价'))
-      ? [`商品词：${productWords.filter(word => text.includes(word)).join('、')}`, ...GROUPS.filter(([name]) => hits.includes(name)).map(([name, re]) => `${name}：${text.match(re)[0]}`)] : [];
+      ? [`商品词：${productWords.filter(word => normalized.includes(word.toLocaleLowerCase())).join('、')}`, ...GROUPS.filter(([name]) => hits.includes(name)).map(([name, re]) => `${name}：${text.match(re)[0]}`)] : [];
   }
   function matchDetails(text, goods) {
     // 仅对本轮已判定的广告提取详情并缓存；hover时不遍历动态、不改变扫描时序。
@@ -52,7 +54,7 @@
     const custom = keywords.filter(word => normalized.includes(word.toLocaleLowerCase()));
     if (custom.length) lines.push(`自定义词：${custom.join('、')}`);
     if (goods) lines.push('结构：商品卡片或商品链接');
-    const products = productWords.filter(word => text.includes(word));
+    const products = productWords.filter(word => normalized.includes(word.toLocaleLowerCase()));
     if (products.length) lines.push(`商品词：${products.join('、')}`);
     for (const [name, re] of GROUPS) {
       const found = [...new Set(Array.from(text.matchAll(new RegExp(re.source, 'g')), match => match[0]))];
@@ -110,7 +112,7 @@
       return url.hostname === 'www.bilibili.com' && path.replace(/\/$/, '') === `/video/${key}` ? aid : '';
     } catch { return ''; }
   }
-  const segmentRulesVersion = '区间规则1.0';
+  const segmentRulesVersion = '区间规则1.1';
   if (isVideoPage()) {
     // 层级：主要为“可能存在广告”，次要为来源和命中内容，关闭为低强调操作。
     // 沿用站点背景/文字Token、B站粉色、10px圆角和180ms ease-out；不改变播放器尺寸。
@@ -323,7 +325,7 @@
       else if (/https?:\/\/b23\.tv\/mall-[^\s<>"']+/i.test(text)) reasons.unshift('商品链接：B站商品短链接');
       const declaration = text.match(/本(?:期|条|次)(?:视频|内容)?.{0,12}(?:由.{1,24}赞助|含.{0,4}(?:商业推广|付费推广))|商业推广|付费推广|品牌合作|赞助商|广告合作|合作推广/);
       if (declaration) reasons.push(`推广标识：${declaration[0]}`);
-      if (!reasons.length && /领.{0,4}(?:券|优惠券)|【券\s*\d+/.test(text) && /大促|到手|划算|热销|囤货|抄底价/.test(text)) reasons.push('领券导购与促销文案同时出现');
+      if (!reasons.length && !/广告声称|广告里说|虚假宣传|智商税|不要购买|不推荐/.test(text) && /领.{0,4}(?:券|优惠券)|【券\s*\d+/.test(text) && /大促|到手|划算|热销|囤货|抄底价/.test(text)) reasons.push('领券导购与促销文案同时出现');
       return { text, reasons: [...new Set(reasons)], signature: text + links.map(a => a.getAttribute('href')).join('|') };
     }
     function commentContentReady(element) {
@@ -687,6 +689,17 @@
   function validSegment(start, end, duration) {
     return [start, end, duration].every(value => typeof value === 'number' && Number.isFinite(value)) && duration > 0 && start >= 0 && end > start && end <= duration;
   }
+  function supplementVocabulary() {
+    return '鱼油|藻油|辅酶Q10|叶黄素|虾青素|益生菌|蛋白粉|维生素|钙片'.split('|');
+  }
+  function supplementSignals(text) {
+    const normalized = text.toLocaleLowerCase();
+    const product = supplementVocabulary().some(word => normalized.includes(word.toLocaleLowerCase()));
+    // 泛指评论区或论文链接不算购物；纯度、检测报告、品牌资历不单独定广告。
+    const sales = /(?:点击|跳转|链接|置顶).{0,16}(?:购买|下单|领.{0,6}(?:优惠)?券)|(?:购买|购入).{0,4}(?:组合装|套装)|(?:领取|领到|领).{0,8}(?:优惠券|专属券)|优惠码|兑换码/gi;
+    const salesCount = Array.from(text.matchAll(sales)).length;
+    return { product, salesCount, directSales: salesCount > 0, criticism: /广告声称|广告里说|虚假宣传|智商税|不要购买|不推荐/.test(text) };
+  }
   function communitySegments(payload, identity, rejected = {}) {
     if (!Array.isArray(payload)) throw new Error('社区响应格式错误');
     const rows = payload.find(row => row?.videoID === identity.bvid)?.segments || [];
@@ -707,7 +720,7 @@
     const ending = /回到(?:内容|正题)|继续(?:今天的|本期的)(?:内容|话题)/;
     const product = /沐浴露|洗发水|精华|套装|养成游戏|这款游戏|手游|这款产品|按摩仪|剃须刀|电动牙刷/;
     const cta = /评论区.{0,10}(?:领券|链接|下单)|置顶链接|现在下载|点击.{0,10}(?:下载|购买|领取)|购买链接|优惠码|兑换码/;
-    const benefit = /优惠|领券|性价比|划算|福利|礼包|首日.{0,12}抽|免费|回购|好评|到手价/;
+    const benefit = /优惠|领券|性价比|划算|福利|礼包|首日.{0,12}抽|免费|回购|好评|到手价|赠送|加赠|买.{0,8}送|送.{0,8}(?:随行装|体验装)|限量.{0,6}(?:份|件)/;
     const skeptical = /不是广告|没有赞助|拒绝.{0,6}(?:推广|合作)|虚假宣传|智商税|广告里说|广告声称|不要购买|不推荐/;
     const ranges = [];
     const add = (start, end, evidence, rule) => {
@@ -720,7 +733,10 @@
       for (let j = i + 1; j < lines.length && lines[j].from - first.from <= 360; j++) if (ending.test(lines[j].content)) { end = lines[j]; break; }
       if (end) add(first.from, end.from, lines.filter(l => l.from >= first.from && l.to <= end.to), '明确引入与返回正文');
     }
-    const hits = lines.map(l => ({ ...l, p: product.test(l.content) || customWords.some(word => l.content.toLocaleLowerCase().includes(word.toLocaleLowerCase())), c: cta.test(l.content), b: benefit.test(l.content), negative: skeptical.test(l.content) })).filter(l => l.p || l.c || l.b || l.negative);
+    const hits = lines.map(l => {
+      const supplement = supplementSignals(l.content);
+      return { ...l, p: product.test(l.content) || supplement.product || customWords.some(word => l.content.toLocaleLowerCase().includes(word.toLocaleLowerCase())), h: supplement.product, sale: supplement.directSales, c: cta.test(l.content) || supplement.directSales, b: benefit.test(l.content), negative: skeptical.test(l.content) || supplement.criticism };
+    }).filter(l => l.p || l.c || l.b || l.negative);
     const clusters = [];
     const turns = lines.filter(l => ending.test(l.content));
     for (const hit of hits) {
@@ -733,6 +749,7 @@
       const direct = cluster.filter(l => l.c && !l.negative);
       const negative = cluster.filter(l => l.negative).length;
       if (!cluster.some(l => l.p) || !cluster.some(l => l.b) || !direct.length || negative && direct.length < 2) continue;
+      if (cluster.some(l => l.h) && !cluster.some(l => l.sale && !l.negative)) continue;
       const first = cluster.find(l => l.p);
       const last = cluster.at(-1);
       if (!ranges.some(r => r.start <= first.from && r.end >= last.to)) add(first.from, last.to, cluster, '商品、购买引导与利益点组合');
@@ -845,7 +862,7 @@
             t.controller.signal.addEventListener('abort', abort, { once: true });
             const finish = (fn, value) => { t.controller.signal.removeEventListener('abort', abort); fn(value); };
             handle = GM_xmlhttpRequest({ method: 'GET', url, anonymous: mode !== 'metadata', responseType: 'arraybuffer', timeout: Math.max(1, t.deadline - Date.now()),
-              headers: { Accept: 'application/json', ...(mode === 'community' ? { Origin: 'https://www.bilibili.com', 'X-Ext-Version': 'bilibili-ad-fold/1.4.4' } : { Referer: 'https://www.bilibili.com/' }) },
+              headers: { Accept: 'application/json', ...(mode === 'community' ? { Origin: 'https://www.bilibili.com', 'X-Ext-Version': 'bilibili-ad-fold/1.4.5' } : { Referer: 'https://www.bilibili.com/' }) },
               onprogress: e => { if (e.loaded > 2 * 1024 * 1024) { handle?.abort(); finish(reject, new Error('响应超过2MB预算')); } },
               onload: r => finish(resolve, r), onerror: () => finish(reject, new Error('网络请求失败')), ontimeout: () => finish(reject, new Error('请求超时')), onabort: () => finish(reject, new Error('请求已取消')) });
           });
